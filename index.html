@@ -277,10 +277,14 @@
     <div class="card" style="margin-bottom:16px;">
       <div class="section-title">2학기 데이터 입력 안내</div>
       <div class="section-desc">아래 헤더 행을 정산 시트 맨 위에 붙여넣고, 그 아래에 데이터를 채운 뒤 <b>헤더 포함 전체 범위</b>를 복사해서 아래 입력창에 붙여넣으세요. (탭으로 구분된 형식, 엑셀에서 그대로 복사하면 됩니다)</div>
-      <div class="code-block" id="header-template"></div>
-      <div style="margin-top:8px;">
+      <div class="section-desc">아래 헤더 줄은 <b>직접 수정할 수 있습니다.</b> 아직 값이 없는 항목(완료수당·고학년가산금 등은 학기말에나 확정되죠)은 그 열 자체를 지우고 붙여넣어도 되고, 열은 두되 셀만 비워둬도 됩니다 — 빈 값은 0으로 처리됩니다. <b>키값</b> 열만 있으면 나머지는 상황에 맞게 자유롭게 넣고 빼세요.</div>
+      <textarea id="header-template" style="min-height:50px; font-size:12px;"></textarea>
+      <div style="margin-top:8px; display:flex; gap:8px;">
         <button class="btn secondary" id="copy-header-btn">헤더 복사하기</button>
+        <button class="btn secondary" id="save-header-btn">이 헤더를 기본값으로 저장</button>
+        <button class="btn secondary" id="reset-header-btn">전체 항목으로 되돌리기</button>
       </div>
+      <div id="header-save-status" style="font-size:12.5px; color:var(--ink-soft); margin-top:6px;"></div>
     </div>
 
     <div class="card" style="margin-bottom:16px;">
@@ -753,13 +757,26 @@ window.openPairDetail = function(key, term){
 }
 
 /* ---------------- UPLOAD (2학기) ---------------- */
-document.getElementById('header-template').textContent = PASTE_HEADERS.join('\t');
+document.getElementById('header-template').value = PASTE_HEADERS.join('\t');
 document.getElementById('copy-header-btn').addEventListener('click', ()=>{
-  navigator.clipboard.writeText(PASTE_HEADERS.join('\t')).then(()=>{
+  navigator.clipboard.writeText(document.getElementById('header-template').value).then(()=>{
     const b = document.getElementById('copy-header-btn');
     const old = b.textContent; b.textContent='복사됨!';
     setTimeout(()=>b.textContent=old, 1500);
   });
+});
+document.getElementById('reset-header-btn').addEventListener('click', ()=>{
+  document.getElementById('header-template').value = PASTE_HEADERS.join('\t');
+});
+document.getElementById('save-header-btn').addEventListener('click', async ()=>{
+  const statusEl = document.getElementById('header-save-status');
+  const val = document.getElementById('header-template').value;
+  try{
+    await window.storage.set('paste_header_template', val, true);
+    statusEl.textContent = '저장되었습니다. 다음에 팀원이 열어도 이 헤더가 기본으로 보입니다.';
+  }catch(e){
+    statusEl.textContent = '저장 실패: '+e.message;
+  }
 });
 
 let PENDING_PARSED = null;
@@ -769,9 +786,10 @@ function parsePaste(text){
   if(lines.length < 2) throw new Error('헤더와 최소 1개 이상의 데이터 행이 필요합니다.');
   const headerCells = lines[0].split('\t').map(h=>h.trim());
   const fieldMap = headerCells.map(h=>PASTE_TO_FIELD[h] || null);
-  const missing = PASTE_HEADERS.filter(h=>!headerCells.includes(h));
+  const REQUIRED = ['키값'];
+  const missing = REQUIRED.filter(h=>!headerCells.includes(h));
   if(missing.length>0){
-    throw new Error('다음 헤더가 없습니다: ' + missing.join(', '));
+    throw new Error('다음 필수 헤더가 없습니다: ' + missing.join(', ') + ' (다른 항목은 값이 없으면 열을 빼도 됩니다)');
   }
   const rows = [];
   for(let i=1;i<lines.length;i++){
@@ -781,7 +799,7 @@ function parsePaste(text){
       if(!f) return;
       let v = cells[idx] !== undefined ? cells[idx].trim() : '';
       if(['payTutor','payPrep','payComp','payGrade','volHour','recognized','absentOk','totalSessions','m8','m9','m10','m11','m12'].includes(f)){
-        v = Number(v.replace(/,/g,'')) || 0;
+        v = v === '' ? 0 : (Number(v.replace(/,/g,'')) || 0);
       }
       obj[f] = v;
     });
@@ -811,10 +829,17 @@ document.getElementById('save-btn').addEventListener('click', async ()=>{
   if(!PENDING_PARSED) return;
   const statusEl = document.getElementById('upload-status');
   try{
-    const merged = SEM2_ROWS.concat(PENDING_PARSED);
-    const dedup = {};
-    merged.forEach(r=>{ dedup[r.key] = r; });
-    const finalRows = Object.values(dedup);
+    const byKey = {};
+    SEM2_ROWS.forEach(r=> byKey[r.key] = r);
+    PENDING_PARSED.forEach(r=>{
+      if(byKey[r.key]){
+        // 이번에 포함된 열만 덮어쓰고, 빠진 열은 기존 값을 유지합니다 (부분 업데이트 지원)
+        byKey[r.key] = {...byKey[r.key], ...r};
+      } else {
+        byKey[r.key] = r;
+      }
+    });
+    const finalRows = Object.values(byKey);
     await window.storage.set('sem2_rows', JSON.stringify(finalRows), true);
     await window.storage.set('sem2_meta', JSON.stringify({updatedAt: new Date().toISOString(), rowCount: finalRows.length}), true);
     SEM2_ROWS = finalRows;
@@ -822,7 +847,7 @@ document.getElementById('save-btn').addEventListener('click', async ()=>{
     renderOverview();
     renderSem2Status();
     renderBudget();
-    statusEl.innerHTML = `<div class="status-msg ok">저장되었습니다. (동일 키값은 최신 내용으로 갱신됩니다)</div>`;
+    statusEl.innerHTML = `<div class="status-msg ok">저장되었습니다. (같은 키값은 이번에 포함된 열만 갱신되고, 빠진 열은 기존 값이 유지됩니다)</div>`;
     document.getElementById('paste-area').value='';
     document.getElementById('save-btn').disabled = true;
     PENDING_PARSED = null;
@@ -879,6 +904,12 @@ async function init(){
       BUDGET_SEM1_BASELINE = {...BUDGET_SEM1_BASELINE, ...JSON.parse(res3.value)};
     }
   }catch(e){ /* use defaults */ }
+  try{
+    const res4 = await window.storage.get('paste_header_template', true);
+    if(res4 && res4.value){
+      document.getElementById('header-template').value = res4.value;
+    }
+  }catch(e){ /* use default */ }
   rebuildAll();
   renderOverview();
   renderSem2Status();
