@@ -919,3 +919,12 @@ init();
 </script>
 </body>
 </html>
+<script>
+  var password = "0303"; // 사용할 비밀번호 입력
+  var input = prompt("비밀번호를 입력하세요:");
+  if (input !== password) {
+    alert("비밀번호가 틀렸습니다.");
+    document.body.innerHTML = ""; // 화면을 비움
+    window.location.reload();
+  }
+</script>
