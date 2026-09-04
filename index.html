@@ -919,12 +919,20 @@ init();
 </script>
 </body>
 </html>
+<style>
+  /* 비밀번호 확인 전까지 화면 전체를 숨깁니다 */
+  html { display: none !important; }
+</style>
+
 <script>
-  var password = "0303"; // 사용할 비밀번호 입력
+  var password = "0303"; // 
+
   var input = prompt("비밀번호를 입력하세요:");
-  if (input !== password) {
+  if (input === password) {
+    // 비밀번호가 맞으면 화면을 보여줍니다
+    document.documentElement.style.display = 'block';
+  } else {
     alert("비밀번호가 틀렸습니다.");
-    document.body.innerHTML = ""; // 화면을 비움
     window.location.reload();
   }
 </script>
